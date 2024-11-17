@@ -1,0 +1,862 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="774" onload="init(evt)" viewBox="0 0 1200 774" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+		if (currentSearchTerm === null) return;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="774.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="757" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="757" > </text>
+<g id="frames">
+<g >
+<title>oceanbase::blocksstable::ObMicroBlockRowScanner::open (20,202,020 samples, 11.76%)</title><rect x="1051.2" y="117" width="138.8" height="15.0" fill="rgb(225,94,22)" rx="2" ry="2" />
+<text  x="1054.18" y="127.5" >oceanbase::blocks..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObTFMIndexBlockRowIterator::get_next (10,101,010 samples, 5.88%)</title><rect x="912.4" y="85" width="69.4" height="15.0" fill="rgb(254,227,54)" rx="2" ry="2" />
+<text  x="915.35" y="95.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObAccessService::table_rescan (40,404,040 samples, 23.53%)</title><rect x="287.6" y="261" width="277.7" height="15.0" fill="rgb(254,228,54)" rx="2" ry="2" />
+<text  x="290.65" y="271.5" >oceanbase::storage::ObAccessService::..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObSSTableRowMultiGetter::fetch_row (20,202,020 samples, 11.76%)</title><rect x="565.3" y="181" width="138.8" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="568.29" y="191.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObSSTableRowMultiGetter::inner_get_next_row (20,202,020 samples, 11.76%)</title><rect x="565.3" y="197" width="138.8" height="15.0" fill="rgb(206,9,2)" rx="2" ry="2" />
+<text  x="568.29" y="207.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObEncodeBlockGetReader::get_all_columns (10,101,010 samples, 5.88%)</title><rect x="565.3" y="101" width="69.4" height="15.0" fill="rgb(226,96,23)" rx="2" ry="2" />
+<text  x="568.29" y="111.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObMicroBlockRowGetter::get_block_row (10,101,010 samples, 5.88%)</title><rect x="565.3" y="149" width="69.4" height="15.0" fill="rgb(247,195,46)" rx="2" ry="2" />
+<text  x="568.29" y="159.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleMultiScanMerge::inner_get_next_row (70,707,070 samples, 41.18%)</title><rect x="704.1" y="213" width="485.9" height="15.0" fill="rgb(226,100,23)" rx="2" ry="2" />
+<text  x="707.12" y="223.5" >oceanbase::storage::ObMultipleMultiScanMerge::inner_get_next_row</text>
+</g>
+<g >
+<title>oceanbase::sql::ObTableScanOp::inner_get_next_batch_for_tsc (131,313,130 samples, 76.47%)</title><rect x="287.6" y="373" width="902.4" height="15.0" fill="rgb(225,92,22)" rx="2" ry="2" />
+<text  x="290.65" y="383.5" >oceanbase::sql::ObTableScanOp::inner_get_next_batch_for_tsc</text>
+</g>
+<g >
+<title>oceanbase::sql::ObSortOp::process_sort_batch (131,313,130 samples, 76.47%)</title><rect x="287.6" y="421" width="902.4" height="15.0" fill="rgb(229,111,26)" rx="2" ry="2" />
+<text  x="290.65" y="431.5" >oceanbase::sql::ObSortOp::process_sort_batch</text>
+</g>
+<g >
+<title>oceanbase::storage::ObIndexTreeMultiPassPrefetcher&lt;32, 3&gt;::prefetch_index_tree (20,202,020 samples, 11.76%)</title><rect x="704.1" y="133" width="138.8" height="15.0" fill="rgb(240,164,39)" rx="2" ry="2" />
+<text  x="707.12" y="143.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObTableScanIterator::rescan (40,404,040 samples, 23.53%)</title><rect x="287.6" y="245" width="277.7" height="15.0" fill="rgb(217,58,13)" rx="2" ry="2" />
+<text  x="290.65" y="255.5" >oceanbase::storage::ObTableScanIterat..</text>
+</g>
+<g >
+<title>oceanbase::observer::ObQueryDriver::response_query_result (131,313,130 samples, 76.47%)</title><rect x="287.6" y="517" width="902.4" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="290.65" y="527.5" >oceanbase::observer::ObQueryDriver::response_query_result</text>
+</g>
+<g >
+<title>hnswlib::HierarchicalNSW::searchKnn (10,101,010 samples, 5.88%)</title><rect x="218.2" y="629" width="69.4" height="15.0" fill="rgb(235,140,33)" rx="2" ry="2" />
+<text  x="221.24" y="639.5" >hnswlib..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObTFMIndexBlockRowIterator::get_current (10,101,010 samples, 5.88%)</title><rect x="287.6" y="69" width="69.5" height="15.0" fill="rgb(211,29,7)" rx="2" ry="2" />
+<text  x="290.65" y="79.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::common::ObKVCache&lt;oceanbase::blocksstable::ObRowCacheKey, oceanbase::blocksstable::ObRowCacheValue&gt;::get (10,101,010 samples, 5.88%)</title><rect x="426.5" y="85" width="69.4" height="15.0" fill="rgb(251,213,50)" rx="2" ry="2" />
+<text  x="429.47" y="95.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObIndexTreePrefetcher::last_handle_hit (10,101,010 samples, 5.88%)</title><rect x="773.5" y="101" width="69.4" height="15.0" fill="rgb(225,96,23)" rx="2" ry="2" />
+<text  x="776.53" y="111.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObSSTableRowScanner&lt;oceanbase::storage::ObIndexTreeMultiPassPrefetcher&lt;32, 3&gt; &gt;::fetch_row (30,303,030 samples, 17.65%)</title><rect x="981.8" y="149" width="208.2" height="15.0" fill="rgb(216,54,13)" rx="2" ry="2" />
+<text  x="984.76" y="159.5" >oceanbase::storage::ObSSTab..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIMicroBlockRowScanner::get_next_row (10,101,010 samples, 5.88%)</title><rect x="981.8" y="133" width="69.4" height="15.0" fill="rgb(253,221,53)" rx="2" ry="2" />
+<text  x="984.76" y="143.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObIndexTreeMultiPrefetcher::drill_down (20,202,020 samples, 11.76%)</title><rect x="287.6" y="117" width="138.9" height="15.0" fill="rgb(233,132,31)" rx="2" ry="2" />
+<text  x="290.65" y="127.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::observer::ObSyncPlanDriver::response_result (131,313,130 samples, 76.47%)</title><rect x="287.6" y="533" width="902.4" height="15.0" fill="rgb(236,145,34)" rx="2" ry="2" />
+<text  x="290.65" y="543.5" >oceanbase::observer::ObSyncPlanDriver::response_result</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::EncodingRangeCompareV2::compare (10,101,010 samples, 5.88%)</title><rect x="1051.2" y="53" width="69.4" height="15.0" fill="rgb(221,77,18)" rx="2" ry="2" />
+<text  x="1054.18" y="63.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObTableScanOp::get_next_batch_with_das (131,313,130 samples, 76.47%)</title><rect x="287.6" y="357" width="902.4" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="290.65" y="367.5" >oceanbase::sql::ObTableScanOp::get_next_batch_with_das</text>
+</g>
+<g >
+<title>oceanbase::storage::ObIndexTreePrefetcher::lookup_in_cache (10,101,010 samples, 5.88%)</title><rect x="426.5" y="117" width="69.4" height="15.0" fill="rgb(225,96,23)" rx="2" ry="2" />
+<text  x="429.47" y="127.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObTableScanIterator::init_and_open_get_merge_iter_ (30,303,030 samples, 17.65%)</title><rect x="287.6" y="213" width="208.3" height="15.0" fill="rgb(246,189,45)" rx="2" ry="2" />
+<text  x="290.65" y="223.5" >oceanbase::storage::ObTable..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObDASMergeIter::get_next_seq_rows (131,313,130 samples, 76.47%)</title><rect x="287.6" y="309" width="902.4" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="290.65" y="319.5" >oceanbase::sql::ObDASMergeIter::get_next_seq_rows</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObFixRowIndex::get (10,101,010 samples, 5.88%)</title><rect x="981.8" y="85" width="69.4" height="15.0" fill="rgb(253,222,53)" rx="2" ry="2" />
+<text  x="984.76" y="95.5" >oceanba..</text>
+</g>
+<g >
+<title>[unknown] (10,101,010 samples, 5.88%)</title><rect x="218.2" y="645" width="69.4" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="221.24" y="655.5" >[unknown]</text>
+</g>
+<g >
+<title>all (171,717,170 samples, 100%)</title><rect x="10.0" y="725" width="1180.0" height="15.0" fill="rgb(213,39,9)" rx="2" ry="2" />
+<text  x="13.00" y="735.5" ></text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObRowkeyVector::locate_key (10,101,010 samples, 5.88%)</title><rect x="357.1" y="69" width="69.4" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="360.06" y="79.5" >oceanba..</text>
+</g>
+<g >
+<title>non-virtual thunk to oceanbase::omt::ObThWorker::run (131,313,130 samples, 76.47%)</title><rect x="287.6" y="661" width="902.4" height="15.0" fill="rgb(236,146,35)" rx="2" ry="2" />
+<text  x="290.65" y="671.5" >non-virtual thunk to oceanbase::omt::ObThWorker::run</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObMicroBlockDecoder::get_row (10,101,010 samples, 5.88%)</title><rect x="981.8" y="101" width="69.4" height="15.0" fill="rgb(220,72,17)" rx="2" ry="2" />
+<text  x="984.76" y="111.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObStorageDatumCmpFunc::compare (10,101,010 samples, 5.88%)</title><rect x="1051.2" y="37" width="69.4" height="15.0" fill="rgb(220,71,17)" rx="2" ry="2" />
+<text  x="1054.18" y="47.5" >oceanba..</text>
+</g>
+<g >
+<title>T1004_L0_G0 (171,717,170 samples, 100.00%)</title><rect x="10.0" y="709" width="1180.0" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" >T1004_L0_G0</text>
+</g>
+<g >
+<title>oceanbase::storage::ObTableScanIterator::get_next_rows (70,707,070 samples, 41.18%)</title><rect x="704.1" y="261" width="485.9" height="15.0" fill="rgb(228,110,26)" rx="2" ry="2" />
+<text  x="707.12" y="271.5" >oceanbase::storage::ObTableScanIterator::get_next_rows</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleGetMerge::construct_iters (30,303,030 samples, 17.65%)</title><rect x="287.6" y="181" width="208.3" height="15.0" fill="rgb(250,209,49)" rx="2" ry="2" />
+<text  x="290.65" y="191.5" >oceanbase::storage::ObMulti..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObBatchRowIter::get_next_row (131,313,130 samples, 76.47%)</title><rect x="287.6" y="469" width="902.4" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="290.65" y="479.5" >oceanbase::sql::ObBatchRowIter::get_next_row</text>
+</g>
+<g >
+<title>oceanbase::sql::ObDomainIndexLookupOp::get_next_rows (131,313,130 samples, 76.47%)</title><rect x="287.6" y="293" width="902.4" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="290.65" y="303.5" >oceanbase::sql::ObDomainIndexLookupOp::get_next_rows</text>
+</g>
+<g >
+<title>oceanbase::omt::ObThWorker::process_request (131,313,130 samples, 76.47%)</title><rect x="287.6" y="629" width="902.4" height="15.0" fill="rgb(252,218,52)" rx="2" ry="2" />
+<text  x="290.65" y="639.5" >oceanbase::omt::ObThWorker::process_request</text>
+</g>
+<g >
+<title>oceanbase::omt::ObWorkerProcessor::process_one (131,313,130 samples, 76.47%)</title><rect x="287.6" y="597" width="902.4" height="15.0" fill="rgb(254,229,54)" rx="2" ry="2" />
+<text  x="290.65" y="607.5" >oceanbase::omt::ObWorkerProcessor::process_one</text>
+</g>
+<g >
+<title>oceanbase::storage::ObTableScanRange::init_rowkeys (10,101,010 samples, 5.88%)</title><rect x="495.9" y="213" width="69.4" height="15.0" fill="rgb(210,23,5)" rx="2" ry="2" />
+<text  x="498.88" y="223.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleMerge::get_next_normal_rows (70,707,070 samples, 41.18%)</title><rect x="704.1" y="229" width="485.9" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="707.12" y="239.5" >oceanbase::storage::ObMultipleMerge::get_next_normal_rows</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObStorageDatumCmpFunc::compare (10,101,010 samples, 5.88%)</title><rect x="357.1" y="37" width="69.4" height="15.0" fill="rgb(220,71,17)" rx="2" ry="2" />
+<text  x="360.06" y="47.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObColumnVector::inner_locate_key&lt;oceanbase::blocksstable::ObStorageDatum&gt; (10,101,010 samples, 5.88%)</title><rect x="357.1" y="53" width="69.4" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="360.06" y="63.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::observer::ObMPQuery::process_single_stmt (131,313,130 samples, 76.47%)</title><rect x="287.6" y="549" width="902.4" height="15.0" fill="rgb(249,202,48)" rx="2" ry="2" />
+<text  x="290.65" y="559.5" >oceanbase::observer::ObMPQuery::process_single_stmt</text>
+</g>
+<g >
+<title>oceanbase::common::ObKVGlobalCache::get (10,101,010 samples, 5.88%)</title><rect x="426.5" y="69" width="69.4" height="15.0" fill="rgb(217,56,13)" rx="2" ry="2" />
+<text  x="429.47" y="79.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleGetMerge::open (30,303,030 samples, 17.65%)</title><rect x="287.6" y="197" width="208.3" height="15.0" fill="rgb(210,25,6)" rx="2" ry="2" />
+<text  x="290.65" y="207.5" >oceanbase::storage::ObMulti..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObExecuteResult::get_next_row (131,313,130 samples, 76.47%)</title><rect x="287.6" y="485" width="902.4" height="15.0" fill="rgb(247,196,46)" rx="2" ry="2" />
+<text  x="290.65" y="495.5" >oceanbase::sql::ObExecuteResult::get_next_row</text>
+</g>
+<g >
+<title>oceanbase::sql::ObDASMergeIter::inner_get_next_rows (131,313,130 samples, 76.47%)</title><rect x="287.6" y="325" width="902.4" height="15.0" fill="rgb(241,169,40)" rx="2" ry="2" />
+<text  x="290.65" y="335.5" >oceanbase::sql::ObDASMergeIter::inner_get_next_rows</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObMicroBlockRowGetter::inner_get_row (10,101,010 samples, 5.88%)</title><rect x="565.3" y="133" width="69.4" height="15.0" fill="rgb(237,150,35)" rx="2" ry="2" />
+<text  x="568.29" y="143.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::common::ObKVCacheMap::get (10,101,010 samples, 5.88%)</title><rect x="426.5" y="53" width="69.4" height="15.0" fill="rgb(250,209,49)" rx="2" ry="2" />
+<text  x="429.47" y="63.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIndexBlockRowScanner::get_next (20,202,020 samples, 11.76%)</title><rect x="842.9" y="117" width="138.9" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="845.94" y="127.5" >oceanbase::blocks..</text>
+</g>
+<g >
+<title>oceanbase::storage::return_array_cnt (10,101,010 samples, 5.88%)</title><rect x="634.7" y="133" width="69.4" height="15.0" fill="rgb(247,197,47)" rx="2" ry="2" />
+<text  x="637.71" y="143.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleMerge::get_next_rows (70,707,070 samples, 41.18%)</title><rect x="704.1" y="245" width="485.9" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="707.12" y="255.5" >oceanbase::storage::ObMultipleMerge::get_next_rows</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObMicroBlockDecoder::compare_rowkey (10,101,010 samples, 5.88%)</title><rect x="1120.6" y="53" width="69.4" height="15.0" fill="rgb(212,36,8)" rx="2" ry="2" />
+<text  x="1123.59" y="63.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObTableScanRange::init (10,101,010 samples, 5.88%)</title><rect x="495.9" y="229" width="69.4" height="15.0" fill="rgb(214,42,10)" rx="2" ry="2" />
+<text  x="498.88" y="239.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObResultSet::get_next_row (131,313,130 samples, 76.47%)</title><rect x="287.6" y="501" width="902.4" height="15.0" fill="rgb(230,115,27)" rx="2" ry="2" />
+<text  x="290.65" y="511.5" >oceanbase::sql::ObResultSet::get_next_row</text>
+</g>
+<g >
+<title>oceanbase::storage::ObSSTableRowMultiGetter::inner_open (30,303,030 samples, 17.65%)</title><rect x="287.6" y="149" width="208.3" height="15.0" fill="rgb(207,12,2)" rx="2" ry="2" />
+<text  x="290.65" y="159.5" >oceanbase::storage::ObSSTab..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObTableIterParam::is_valid (10,101,010 samples, 5.88%)</title><rect x="634.7" y="149" width="69.4" height="15.0" fill="rgb(212,33,8)" rx="2" ry="2" />
+<text  x="637.71" y="159.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::omt::ObWorkerProcessor::process (131,313,130 samples, 76.47%)</title><rect x="287.6" y="613" width="902.4" height="15.0" fill="rgb(248,200,47)" rx="2" ry="2" />
+<text  x="290.65" y="623.5" >oceanbase::omt::ObWorkerProcessor::process</text>
+</g>
+<g >
+<title>oceanbase::storage::ObIndexTreeMultiPassPrefetcher&lt;32, 3&gt;::prefetch_micro_data (20,202,020 samples, 11.76%)</title><rect x="842.9" y="133" width="138.9" height="15.0" fill="rgb(219,68,16)" rx="2" ry="2" />
+<text  x="845.94" y="143.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObStoreRowIterator::init (30,303,030 samples, 17.65%)</title><rect x="287.6" y="165" width="208.3" height="15.0" fill="rgb(218,60,14)" rx="2" ry="2" />
+<text  x="290.65" y="175.5" >oceanbase::storage::ObStore..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObIndexTreeMultiPassPrefetcher&lt;32, 3&gt;::ObIndexTreeLevelHandle::prefetch (20,202,020 samples, 11.76%)</title><rect x="704.1" y="117" width="138.8" height="15.0" fill="rgb(234,136,32)" rx="2" ry="2" />
+<text  x="707.12" y="127.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIMicroBlockDecoder::find_bound (20,202,020 samples, 11.76%)</title><rect x="1051.2" y="69" width="138.8" height="15.0" fill="rgb(232,125,29)" rx="2" ry="2" />
+<text  x="1054.18" y="79.5" >oceanbase::blocks..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObLocalIndexLookupOp::do_index_lookup (40,404,040 samples, 23.53%)</title><rect x="287.6" y="277" width="277.7" height="15.0" fill="rgb(238,152,36)" rx="2" ry="2" />
+<text  x="290.65" y="287.5" >oceanbase::sql::ObLocalIndexLookupOp:..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObEncodeBlockGetReader::get_row (10,101,010 samples, 5.88%)</title><rect x="565.3" y="117" width="69.4" height="15.0" fill="rgb(207,9,2)" rx="2" ry="2" />
+<text  x="568.29" y="127.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::omt::ObThWorker::worker (131,313,130 samples, 76.47%)</title><rect x="287.6" y="645" width="902.4" height="15.0" fill="rgb(238,151,36)" rx="2" ry="2" />
+<text  x="290.65" y="655.5" >oceanbase::omt::ObThWorker::worker</text>
+</g>
+<g >
+<title>oceanbase::storage::ObIndexTreeMultiPrefetcher::multi_prefetch (30,303,030 samples, 17.65%)</title><rect x="287.6" y="133" width="208.3" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="290.65" y="143.5" >oceanbase::storage::ObIndex..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObSSTableRowScanner&lt;oceanbase::storage::ObIndexTreeMultiPassPrefetcher&lt;32, 3&gt; &gt;::open_cur_data_block (20,202,020 samples, 11.76%)</title><rect x="1051.2" y="133" width="138.8" height="15.0" fill="rgb(221,75,18)" rx="2" ry="2" />
+<text  x="1054.18" y="143.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObSortOp::inner_get_next_batch (131,313,130 samples, 76.47%)</title><rect x="287.6" y="437" width="902.4" height="15.0" fill="rgb(223,82,19)" rx="2" ry="2" />
+<text  x="290.65" y="447.5" >oceanbase::sql::ObSortOp::inner_get_next_batch</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIndexBlockRowScanner::get_next_idx_row (10,101,010 samples, 5.88%)</title><rect x="287.6" y="85" width="69.5" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="290.65" y="95.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIMicroBlockReader::locate_range (20,202,020 samples, 11.76%)</title><rect x="1051.2" y="85" width="138.8" height="15.0" fill="rgb(253,225,53)" rx="2" ry="2" />
+<text  x="1054.18" y="95.5" >oceanbase::blocks..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObRowCache::get_row (10,101,010 samples, 5.88%)</title><rect x="426.5" y="101" width="69.4" height="15.0" fill="rgb(205,3,0)" rx="2" ry="2" />
+<text  x="429.47" y="111.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleMerge::get_next_normal_rows (20,202,020 samples, 11.76%)</title><rect x="565.3" y="229" width="138.8" height="15.0" fill="rgb(221,74,17)" rx="2" ry="2" />
+<text  x="568.29" y="239.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIndexBlockRowScanner::get_next (10,101,010 samples, 5.88%)</title><rect x="287.6" y="101" width="69.5" height="15.0" fill="rgb(223,85,20)" rx="2" ry="2" />
+<text  x="290.65" y="111.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObOperator::get_next_batch (131,313,130 samples, 76.47%)</title><rect x="287.6" y="453" width="902.4" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="290.65" y="463.5" >oceanbase::sql::ObOperator::get_next_batch</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleMerge::get_next_rows (20,202,020 samples, 11.76%)</title><rect x="565.3" y="245" width="138.8" height="15.0" fill="rgb(227,102,24)" rx="2" ry="2" />
+<text  x="568.29" y="255.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObTableScanIterator::get_next_rows (20,202,020 samples, 11.76%)</title><rect x="565.3" y="261" width="138.8" height="15.0" fill="rgb(228,110,26)" rx="2" ry="2" />
+<text  x="568.29" y="271.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleGetMerge::inner_get_next_row (20,202,020 samples, 11.76%)</title><rect x="565.3" y="213" width="138.8" height="15.0" fill="rgb(207,12,2)" rx="2" ry="2" />
+<text  x="568.29" y="223.5" >oceanbase::storag..</text>
+</g>
+<g >
+<title>vsag::SafeAllocator::Allocate (10,101,010 samples, 5.88%)</title><rect x="218.2" y="677" width="69.4" height="15.0" fill="rgb(242,170,40)" rx="2" ry="2" />
+<text  x="221.24" y="687.5" >vsag::S..</text>
+</g>
+<g >
+<title>oceanbase::observer::ObMPQuery::process (131,313,130 samples, 76.47%)</title><rect x="287.6" y="565" width="902.4" height="15.0" fill="rgb(219,65,15)" rx="2" ry="2" />
+<text  x="290.65" y="575.5" >oceanbase::observer::ObMPQuery::process</text>
+</g>
+<g >
+<title>oceanbase::sql::ObVectorIndexLookupOp::get_aux_table_rowkeys (70,707,070 samples, 41.18%)</title><rect x="704.1" y="277" width="485.9" height="15.0" fill="rgb(249,204,48)" rx="2" ry="2" />
+<text  x="707.12" y="287.5" >oceanbase::sql::ObVectorIndexLookupOp::get_aux_table_rowkeys</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObMicroBlockRowGetter::get_row (10,101,010 samples, 5.88%)</title><rect x="565.3" y="165" width="69.4" height="15.0" fill="rgb(239,159,38)" rx="2" ry="2" />
+<text  x="568.29" y="175.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::common::ObKVCacheHazardStation::acquire (10,101,010 samples, 5.88%)</title><rect x="426.5" y="37" width="69.4" height="15.0" fill="rgb(239,160,38)" rx="2" ry="2" />
+<text  x="429.47" y="47.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObOperator::get_next_batch (131,313,130 samples, 76.47%)</title><rect x="287.6" y="405" width="902.4" height="15.0" fill="rgb(245,187,44)" rx="2" ry="2" />
+<text  x="290.65" y="415.5" >oceanbase::sql::ObOperator::get_next_batch</text>
+</g>
+<g >
+<title>oceanbase::rpc::frame::ObSqlProcessor::run (131,313,130 samples, 76.47%)</title><rect x="287.6" y="581" width="902.4" height="15.0" fill="rgb(225,93,22)" rx="2" ry="2" />
+<text  x="290.65" y="591.5" >oceanbase::rpc::frame::ObSqlProcessor::run</text>
+</g>
+<g >
+<title>oceanbase::sql::ObLocalIndexLookupOp::get_next_rows_from_data_table (20,202,020 samples, 11.76%)</title><rect x="565.3" y="277" width="138.8" height="15.0" fill="rgb(230,119,28)" rx="2" ry="2" />
+<text  x="568.29" y="287.5" >oceanbase::sql::O..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIMicroBlockRowScanner::locate_range_pos (20,202,020 samples, 11.76%)</title><rect x="1051.2" y="101" width="138.8" height="15.0" fill="rgb(222,81,19)" rx="2" ry="2" />
+<text  x="1054.18" y="111.5" >oceanbase::blocks..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIndexBlockRowScanner::open (10,101,010 samples, 5.88%)</title><rect x="357.1" y="101" width="69.4" height="15.0" fill="rgb(238,153,36)" rx="2" ry="2" />
+<text  x="360.06" y="111.5" >oceanba..</text>
+</g>
+<g >
+<title>[unknown] (40,404,040 samples, 23.53%)</title><rect x="10.0" y="693" width="277.6" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" >[unknown]</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIMicroBlockRowScanner::inner_get_next_row (10,101,010 samples, 5.88%)</title><rect x="981.8" y="117" width="69.4" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="984.76" y="127.5" >oceanba..</text>
+</g>
+<g >
+<title>vsag::L2SqrSIMD16ExtAVX512 (30,303,030 samples, 17.65%)</title><rect x="10.0" y="677" width="208.2" height="15.0" fill="rgb(244,182,43)" rx="2" ry="2" />
+<text  x="13.00" y="687.5" >vsag::L2SqrSIMD16ExtAVX512</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObTFMIndexBlockRowIterator::locate_key (10,101,010 samples, 5.88%)</title><rect x="357.1" y="85" width="69.4" height="15.0" fill="rgb(251,212,50)" rx="2" ry="2" />
+<text  x="360.06" y="95.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::lib::Thread::__th_start (131,313,130 samples, 76.47%)</title><rect x="287.6" y="677" width="902.4" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="290.65" y="687.5" >oceanbase::lib::Thread::__th_start</text>
+</g>
+<g >
+<title>oceanbase::storage::ObTableScanIterator::open_iter (30,303,030 samples, 17.65%)</title><rect x="287.6" y="229" width="208.3" height="15.0" fill="rgb(242,172,41)" rx="2" ry="2" />
+<text  x="290.65" y="239.5" >oceanbase::storage::ObTable..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIntegerBaseDiffDecoder::decode (10,101,010 samples, 5.88%)</title><rect x="1120.6" y="37" width="69.4" height="15.0" fill="rgb(238,156,37)" rx="2" ry="2" />
+<text  x="1123.59" y="47.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObIndexBlockRowScanner::get_next_idx_row (20,202,020 samples, 11.76%)</title><rect x="842.9" y="101" width="138.9" height="15.0" fill="rgb(224,89,21)" rx="2" ry="2" />
+<text  x="845.94" y="111.5" >oceanbase::blocks..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObIndexTreeMultiPassPrefetcher&lt;32, 3&gt;::prefetch (40,404,040 samples, 23.53%)</title><rect x="704.1" y="149" width="277.7" height="15.0" fill="rgb(221,75,17)" rx="2" ry="2" />
+<text  x="707.12" y="159.5" >oceanbase::storage::ObIndexTreeMultiP..</text>
+</g>
+<g >
+<title>oceanbase::sql::ObTableScanOp::inner_get_next_batch (131,313,130 samples, 76.47%)</title><rect x="287.6" y="389" width="902.4" height="15.0" fill="rgb(246,191,45)" rx="2" ry="2" />
+<text  x="290.65" y="399.5" >oceanbase::sql::ObTableScanOp::inner_get_next_batch</text>
+</g>
+<g >
+<title>[unknown] (10,101,010 samples, 5.88%)</title><rect x="218.2" y="661" width="69.4" height="15.0" fill="rgb(210,24,5)" rx="2" ry="2" />
+<text  x="221.24" y="671.5" >[unknown]</text>
+</g>
+<g >
+<title>oceanbase::storage::ObSSTableRowScanner&lt;oceanbase::storage::ObIndexTreeMultiPassPrefetcher&lt;32, 3&gt; &gt;::inner_get_next_row (70,707,070 samples, 41.18%)</title><rect x="704.1" y="165" width="485.9" height="15.0" fill="rgb(218,62,14)" rx="2" ry="2" />
+<text  x="707.12" y="175.5" >oceanbase::storage::ObSSTableRowScanner&lt;oceanbase::storage::ObInde..</text>
+</g>
+<g >
+<title>oceanbase::blocksstable::ObMicroBlockRowGetter::switch_context (10,101,010 samples, 5.88%)</title><rect x="634.7" y="165" width="69.4" height="15.0" fill="rgb(234,137,32)" rx="2" ry="2" />
+<text  x="637.71" y="175.5" >oceanba..</text>
+</g>
+<g >
+<title>start_thread (131,313,130 samples, 76.47%)</title><rect x="287.6" y="693" width="902.4" height="15.0" fill="rgb(212,34,8)" rx="2" ry="2" />
+<text  x="290.65" y="703.5" >start_thread</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleScanMerge::supply_consume (70,707,070 samples, 41.18%)</title><rect x="704.1" y="181" width="485.9" height="15.0" fill="rgb(250,209,49)" rx="2" ry="2" />
+<text  x="707.12" y="191.5" >oceanbase::storage::ObMultipleScanMerge::supply_consume</text>
+</g>
+<g >
+<title>oceanbase::sql::ObDASIter::get_next_rows (131,313,130 samples, 76.47%)</title><rect x="287.6" y="341" width="902.4" height="15.0" fill="rgb(248,197,47)" rx="2" ry="2" />
+<text  x="290.65" y="351.5" >oceanbase::sql::ObDASIter::get_next_rows</text>
+</g>
+<g >
+<title>oceanbase::share::ObTenantBase::id (10,101,010 samples, 5.88%)</title><rect x="773.5" y="85" width="69.4" height="15.0" fill="rgb(225,96,22)" rx="2" ry="2" />
+<text  x="776.53" y="95.5" >oceanba..</text>
+</g>
+<g >
+<title>oceanbase::storage::ObMultipleScanMerge::inner_get_next_row (70,707,070 samples, 41.18%)</title><rect x="704.1" y="197" width="485.9" height="15.0" fill="rgb(205,1,0)" rx="2" ry="2" />
+<text  x="707.12" y="207.5" >oceanbase::storage::ObMultipleScanMerge::inner_get_next_row</text>
+</g>
+</g>
+</svg>
