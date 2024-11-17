@@ -77,21 +77,24 @@ def run_commands(perf_command, python_command):
             # os.kill(perf_process.pid, signal.SIGKILL)  # 强制终止
             # print("Perf process was forcefully terminated.")
 
-def run(pid):
-    path = "/root/source/FlameGraphScript/"
+def run(pid, skip):
+    path = "/root/source/OBFlameGraph/"
     repo_path_1 = "/root/source/ann-benchmarks/"
     repo_path_2 = "/root/source/ann-benchmarks/ann_benchmarks/algorithms/oceanbase/"
     original_dir = os.getcwd()
     # 定义两个命令
-    perf_command_1 = ["perf", "record", "-o", path+"basic.data", "-F", "99", "-p", f"{pid}", "-a", "-g"]
+    perf_command_basic = [
+        ["perf", "record", "-o", path+"basic1.data", "-F", "99", "-p", f"{pid}", "-a", "-g"],
+        ["perf", "record", "-o", path+"basic2.data", "-F", "99", "-p", f"{pid}", "-a", "-g"]
+    ]
     perf_command_sql = [
         ["perf", "record", "-o", path+"sql.data", "-F", "99", "-p", f"{pid}", "-a", "-g"],
         ["perf", "record", "-o", path+"sql1.data", "-F", "99", "-p", f"{pid}", "-a", "-g"],
         ["perf", "record", "-o", path+"sql2.data", "-F", "99", "-p", f"{pid}", "-a", "-g"],
         ["perf", "record", "-o", path+"sql3.data", "-F", "99", "-p", f"{pid}", "-a", "-g"]
     ]
-    # python_command_1 = ["python", "/root/source/ann-benchmarks/run.py", "--algorithm", "oceanbase", "--local", "--force", "--dataset", "sift-128-euclidean", "--runs", "1"]
-    python_command = ["python", "/root/source/ann-benchmarks/run.py", "--algorithm", "oceanbase", "--local", "--force", "--dataset", "sift-128-euclidean", "--runs", "1", "--skip_fit"]
+    python_command = ["python", "/root/source/ann-benchmarks/run.py", "--algorithm", "oceanbase", "--local", "--force", "--dataset", "sift-128-euclidean", "--runs", "1"]
+    python_command_skip_fit = ["python", "/root/source/ann-benchmarks/run.py", "--algorithm", "oceanbase", "--local", "--force", "--dataset", "sift-128-euclidean", "--runs", "1", "--skip_fit"]
     python_command_sql = [
         ["python", "/root/source/ann-benchmarks/ann_benchmarks/algorithms/oceanbase/hybrid_ann.py"],
         ["python", "/root/source/ann-benchmarks/ann_benchmarks/algorithms/oceanbase/hybrid_ann_sql1.py"],
@@ -100,8 +103,9 @@ def run(pid):
     ]
     # 切换到指定目录
     os.chdir(repo_path_1)
-    # run_commands(perf_command_1, python_command_1)
-    run_commands(perf_command_1, python_command)
+    if (not skip):
+        run_commands(perf_command_basic[0], python_command)
+    run_commands(perf_command_basic[1], python_command_skip_fit)
     os.chdir(repo_path_2)
     for i in range(0, 4):
         run_commands(perf_command_sql[i], python_command_sql[i])
@@ -160,36 +164,57 @@ def generate_flamegraph(data_file, output_svg, flamegraph_dir):
     except Exception as e:
         print(f"Unexpected error: {e}")
 
-def execute_command_and_save(pid):
+def execute_command_and_save(pid, skip):
     """
     执行命令并将输出保存到文件中
     """
-    run(pid)
+    run(pid, skip)
     # 配置参数
-    data_file = "basic.data"  # 输入的 perf 数据文件
-    output_svg = "basic.svg"  # 输出的 SVG 文件
-    flamegraph_dir = "/root/source/FlameGraph/"  # FlameGraph 工具的路径
-    # 调用函数生成火焰图
-    generate_flamegraph(data_file, output_svg, flamegraph_dir)
-    data_file = "sql1.data"  # 输入的 perf 数据文件
-    output_svg = "sql1.svg"  # 输出的 SVG 文件
-    # 调用函数生成火焰图
-    generate_flamegraph(data_file, output_svg, flamegraph_dir)
-    data_file = "sql2.data"  # 输入的 perf 数据文件
-    output_svg = "sql2.svg"  # 输出的 SVG 文件
-    # 调用函数生成火焰图
-    generate_flamegraph(data_file, output_svg, flamegraph_dir)
-    data_file = "sql3.data"  # 输入的 perf 数据文件
-    output_svg = "sql3.svg"  # 输出的 SVG 文件
-    # 调用函数生成火焰图
-    generate_flamegraph(data_file, output_svg, flamegraph_dir)
+    if(not skip):
+        data_file = [
+            "basic1.data",
+            "basic2.data",
+            "sql.data",
+            "sql1.data",
+            "sql2.data",
+            "sql3.data",
+        ]
+        output_svg = [
+            "basic1.svg",
+            "basic2.svg",
+            "sql.svg",
+            "sql1.svg",
+            "sql2.svg",
+            "sql3.svg",
+        ]
+        flamegraph_dir = "/root/source/FlameGraph/"  # FlameGraph 工具的路径
+        for i in range(0, 5):
+            generate_flamegraph(data_file[i], output_svg[i], flamegraph_dir)
+    else:
+        data_file = [
+            "basic2.data",
+            "sql.data",
+            "sql1.data",
+            "sql2.data",
+            "sql3.data",
+        ]
+        output_svg = [
+            "basic2.svg",
+            "sql.svg",
+            "sql1.svg",
+            "sql2.svg",
+            "sql3.svg",
+        ]
+        flamegraph_dir = "/root/source/FlameGraph/"  # FlameGraph 工具的路径
+        for i in range(0, 5):
+            generate_flamegraph(data_file[i], output_svg[i], flamegraph_dir)
 
 
 def main(args):
     # 执行的命令和输出文件
     
     # 执行命令并保存输出
-    execute_command_and_save(args.pid)
+    execute_command_and_save(args.pid, args.skip_fit)
     
     # 获取日期和最新 commit ID
     current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -202,9 +227,14 @@ def main(args):
     create_folder_and_readme(folder_name, readme_content)
     
     # 移动文件到新文件夹
-    output_svg = ["basic.svg", "sql1.svg", "sql2.svg", "sql3.svg"]  # 输出的 SVG 文件
-    for i in output_svg:
-        os.rename(i, os.path.join(folder_name, i))
+    if (not args.skip_fit):
+        output_svg = ["basic1.svg","basic2.svg", "sql.svg", "sql1.svg", "sql2.svg", "sql3.svg"]  # 输出的 SVG 文件
+        for i in output_svg:
+            os.rename(i, os.path.join(folder_name, i))
+    else:
+        output_svg = ["basic2.svg", "sql.svg", "sql1.svg", "sql2.svg", "sql3.svg"]  # 输出的 SVG 文件
+        for i in output_svg:
+            os.rename(i, os.path.join(folder_name, i))
     print(f"Files and README.md have been moved to folder: {folder_name}")
 
 if __name__ == "__main__":
