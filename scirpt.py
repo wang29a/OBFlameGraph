@@ -117,10 +117,10 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(description="Run two commands and manage their execution with a number parameter.")
     parser.add_argument(
-        "--pid", 
+        "--port", 
         type=int, 
         required=True, 
-        help="OB pid"
+        help="OB port"
     )
     parser.add_argument(
         "--skip-fit", 
@@ -164,11 +164,11 @@ def generate_flamegraph(data_file, output_svg, flamegraph_dir):
     except Exception as e:
         print(f"Unexpected error: {e}")
 
-def execute_command_and_save(pid, skip):
+def execute_command_and_save(port, skip):
     """
     执行命令并将输出保存到文件中
     """
-    run(pid, skip)
+    run(port, skip)
     # 配置参数
     if(not skip):
         data_file = [
@@ -214,7 +214,7 @@ def main(args):
     # 执行的命令和输出文件
     
     # 执行命令并保存输出
-    execute_command_and_save(args.pid, args.skip_fit)
+    execute_command_and_save(args.port, args.skip_fit)
     
     # 获取日期和最新 commit ID
     current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
