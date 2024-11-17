@@ -218,7 +218,7 @@ def main(args):
     
     # 获取日期和最新 commit ID
     current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
-    repo_path = "/root/source/oceanbase"  # 替换为你的 Git 仓库路径
+    repo_path = "/root/source/OceanBase"  # 替换为你的 Git 仓库路径
     commit_id = get_commit_id(repo_path)
     
     # 创建文件夹
