@@ -5,6 +5,12 @@ import time
 import argparse
 from datetime import datetime
 
+def log_message(message: str):
+    """
+    打印日志消息
+    """
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}")
+
 def get_commit_id(repo_path="."):
     """
     获取指定目录下 Git 仓库的最新 commit ID。
@@ -48,65 +54,57 @@ def create_folder_and_readme(folder_name, readme_content):
     readme_path = os.path.join(folder_name, "README.md")
     with open(readme_path, "w") as f:
         f.write(readme_content)
+    log_message(f"Folder '{folder_name}' created with README.md")
 
 def run_commands(perf_command, python_command):
     try:
-        # 启动 perf 命令
+        log_message(f"Starting perf command: {' '.join(perf_command)}")
         perf_process = subprocess.Popen(perf_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        print(f"Started perf process with PID: {perf_process.pid}")
 
-        # 启动 Python 脚本 (阻塞执行)
-        python_process = subprocess.run(python_command, text=True)
-        print("Python script a.py execution completed.")
+        log_message(f"Running Python script: {' '.join(python_command)}")
+        subprocess.run(python_command, text=True, check=True)
 
-        # 等待 1 秒以确保 `perf` 有时间运行
-        time.sleep(1)
-
-        # 结束 perf 进程
-        if perf_process.poll() is None:  # 检查是否仍在运行
-            os.kill(perf_process.pid, signal.SIGINT)  # 向 perf 发送中断信号
-            print("Perf process has been terminated.")
-            time.sleep(5)
-
+        time.sleep(5)  # 等待 perf 运行稳定
+        if perf_process.poll() is None:
+            os.kill(perf_process.pid, signal.SIGINT)  # 中断 perf
+            log_message("Perf process terminated.")
     except Exception as e:
-        print(f"Error occurred: {e}")
+        log_message(f"Error occurred during command execution: {e}")
     finally:
-        # 确保所有子进程都终止
         if perf_process.poll() is None:
             pass
             # os.kill(perf_process.pid, signal.SIGKILL)  # 强制终止
-            # print("Perf process was forcefully terminated.")
+            # log_message("Perf process forcefully terminated.")
 
-def run(pid, skip):
+
+def run(port, skip):
     path = "/root/source/OBFlameGraph/"
     repo_path_1 = "/root/source/ann-benchmarks/"
-    repo_path_2 = "/root/source/ann-benchmarks/ann_benchmarks/algorithms/oceanbase/"
     original_dir = os.getcwd()
     # 定义两个命令
     perf_command_basic = [
-        ["perf", "record", "-o", path+"basic1.data", "-F", "99", "-p", f"{pid}", "-a", "-g"],
-        ["perf", "record", "-o", path+"basic2.data", "-F", "99", "-p", f"{pid}", "-a", "-g"]
+        ["perf", "record", "-o", path+"basic1.data", "-F", "99", "-p", f"{port}", "-a", "-g"],
+        ["perf", "record", "-o", path+"basic2.data", "-F", "99", "-p", f"{port}", "-a", "-g"]
     ]
     perf_command_sql = [
-        ["perf", "record", "-o", path+"sql.data", "-F", "99", "-p", f"{pid}", "-a", "-g"],
-        ["perf", "record", "-o", path+"sql1.data", "-F", "99", "-p", f"{pid}", "-a", "-g"],
-        ["perf", "record", "-o", path+"sql2.data", "-F", "99", "-p", f"{pid}", "-a", "-g"],
-        ["perf", "record", "-o", path+"sql3.data", "-F", "99", "-p", f"{pid}", "-a", "-g"]
+        ["perf", "record", "-o", path+"sql.data", "-F", "99", "-p", f"{port}", "-a", "-g"],
+        ["perf", "record", "-o", path+"sql1.data", "-F", "99", "-p", f"{port}", "-a", "-g"],
+        ["perf", "record", "-o", path+"sql2.data", "-F", "99", "-p", f"{port}", "-a", "-g"],
+        ["perf", "record", "-o", path+"sql3.data", "-F", "99", "-p", f"{port}", "-a", "-g"]
     ]
     python_command = ["python", "/root/source/ann-benchmarks/run.py", "--algorithm", "oceanbase", "--local", "--force", "--dataset", "sift-128-euclidean", "--runs", "1"]
     python_command_skip_fit = ["python", "/root/source/ann-benchmarks/run.py", "--algorithm", "oceanbase", "--local", "--force", "--dataset", "sift-128-euclidean", "--runs", "1", "--skip_fit"]
     python_command_sql = [
-        ["python", "/root/source/ann-benchmarks/ann_benchmarks/algorithms/oceanbase/hybrid_ann.py"],
-        ["python", "/root/source/ann-benchmarks/ann_benchmarks/algorithms/oceanbase/hybrid_ann_sql1.py"],
-        ["python", "/root/source/ann-benchmarks/ann_benchmarks/algorithms/oceanbase/hybrid_ann_sql2.py"],
-        ["python", "/root/source/ann-benchmarks/ann_benchmarks/algorithms/oceanbase/hybrid_ann_sql3.py"]
+        ["python", "-m", "ann_benchmarks.algorithms.oceanbase.hybrid_ann", "--skip_fit"],
+        ["python", "-m", "ann_benchmarks.algorithms.oceanbase.hybrid_ann", "--skip_fit", "--queries", "sql1"],
+        ["python", "-m", "ann_benchmarks.algorithms.oceanbase.hybrid_ann", "--skip_fit", "--queries", "sql2"],
+        ["python", "-m", "ann_benchmarks.algorithms.oceanbase.hybrid_ann", "--skip_fit", "--queries", "sql3"],
     ]
     # 切换到指定目录
     os.chdir(repo_path_1)
     if (not skip):
         run_commands(perf_command_basic[0], python_command)
     run_commands(perf_command_basic[1], python_command_skip_fit)
-    os.chdir(repo_path_2)
     for i in range(0, 4):
         run_commands(perf_command_sql[i], python_command_sql[i])
     os.chdir(original_dir)
@@ -117,10 +115,10 @@ def parse_arguments():
     """
     parser = argparse.ArgumentParser(description="Run two commands and manage their execution with a number parameter.")
     parser.add_argument(
-        "--port", 
+        "--pid", 
         type=int, 
         required=True, 
-        help="OB port"
+        help="obsever pid"
     )
     parser.add_argument(
         "--skip-fit", 
@@ -168,53 +166,22 @@ def execute_command_and_save(port, skip):
     """
     执行命令并将输出保存到文件中
     """
-    run(port, skip)
-    # 配置参数
-    if(not skip):
-        data_file = [
-            "basic1.data",
-            "basic2.data",
-            "sql.data",
-            "sql1.data",
-            "sql2.data",
-            "sql3.data",
-        ]
-        output_svg = [
-            "basic1.svg",
-            "basic2.svg",
-            "sql.svg",
-            "sql1.svg",
-            "sql2.svg",
-            "sql3.svg",
-        ]
-        flamegraph_dir = "/root/source/FlameGraph/"  # FlameGraph 工具的路径
-        for i in range(0, 5):
-            generate_flamegraph(data_file[i], output_svg[i], flamegraph_dir)
-    else:
-        data_file = [
-            "basic2.data",
-            "sql.data",
-            "sql1.data",
-            "sql2.data",
-            "sql3.data",
-        ]
-        output_svg = [
-            "basic2.svg",
-            "sql.svg",
-            "sql1.svg",
-            "sql2.svg",
-            "sql3.svg",
-        ]
-        flamegraph_dir = "/root/source/FlameGraph/"  # FlameGraph 工具的路径
-        for i in range(0, 5):
-            generate_flamegraph(data_file[i], output_svg[i], flamegraph_dir)
+    data_files = ["basic1.data", "basic2.data", "sql.data", "sql1.data", "sql2.data", "sql3.data"]
+    output_svgs = [f.replace(".data", ".svg") for f in data_files]
+    flamegraph_dir = "/root/source/FlameGraph/"
+
+    # 跳过 fit 时调整处理数据集
+    data_files = data_files[1:] if skip else data_files
+    output_svgs = output_svgs[1:] if skip else output_svgs
+
+    for data_file, output_svg in zip(data_files, output_svgs):
+        generate_flamegraph(data_file, output_svg, flamegraph_dir)
+
 
 
 def main(args):
-    # 执行的命令和输出文件
-    
-    # 执行命令并保存输出
-    execute_command_and_save(args.port, args.skip_fit)
+    run(args.pid, args.skip_fit)
+    execute_command_and_save(args.pid, args.skip_fit)
     
     # 获取日期和最新 commit ID
     current_date = datetime.now().strftime("%Y-%m-%d %H:%M")

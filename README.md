@@ -1,5 +1,6 @@
 ```sh
 bash build.sh release --init --make -j2 --silent
+bash build.sh debug --init --make -j2 --silent
 ```
 
 ```sh
@@ -11,24 +12,36 @@ bash build.sh release --init --make -j2 --silent
 ```sh
 # 使用客户端连接observer
 ./deps/3rd/u01/obclient/bin/obclient -h127.0.0.1 -P2881 -uroot -Doceanbase -A
+./deps/3rd/u01/obclient/bin/obclient -h127.0.0.1 -P2881 -uroot@perf -Dtest -A
+create resource unit unit_1 max_cpu 6, memory_size "10G", log_disk_size "10G";
+create resource pool pool_2 unit = 'unit_1', unit_num = 1, zone_list = ('zone1');
+create tenant perf replica_num = 1,primary_zone='zone1', resource_pool_list=('pool_2') set ob_tcp_invited_nodes='%';
+
 ```
+
+gdb attach $(pidof observer)
 
 ```sh
 # 停止测试集群
 ./tools/deploy/obd.sh stop -n obcluster
 #替换二进制文件
 cp build_debug/src/observer/observer /tmp/obtest/bin/observer
+cp build_debug/src/observer/observer /data/obcluster/bin/observer
+cp build_release/src/observer/observer /data/obcluster/bin/observer
 cp build_release/src/observer/observer /tmp/obtest/bin/observer
 #启动测试集群
 ./tools/deploy/obd.sh start -n obcluster
 # 重启集群
-./tools/deploy/obd.sh cluster restart obcluster
+./tools/deploy/obd.sh restart obcluster
+# 销毁集群
+./tools/deploy/obd.sh destroy -n obcluster
 ```
 
 运行前确保代码中的文件位置与运行环境的位置一致
 
 ```sh
-python scirpt.py --port [ob端口号] [--skip-fit]
+python scirpt.py --pid [observer 线程id] [--skip-fit]
+python scirpt.py --pid $(pidof observer) --skip-fit
 ```
 
 ```sh
@@ -51,5 +64,20 @@ Computing knn metrics
 ```
 
 ```sh
-python python hybrid_ann.py
-``
+python hybrid_ann.py
+python -m ann_benchmarks.algorithms.oceanbase.hybrid_ann --skip_fit
+python -m ann_benchmarks.algorithms.oceanbase.hybrid_ann --skip_fit
+```
+
+
+```
+alter system set ob_vector_memory_limit_percentage=34;
+DROP TABLE IF EXISTS items1;
+CREATE TABLE items1 (id int,c1 int, embedding vector(5), primary key(id),key(c1));
+insert into items1 values (1, 1, '[10, 10, 10, 10, 10]');
+SELECT id FROM items1 ORDER BY l2_distance(embedding, '[10, 10, 10, 10, 10]') APPROXIMATE LIMIT 1;
+set ob_log_level=trace;
+select last_trace_id();
+
+SET GLOBAL ob_query_timeout =1000000000000;
+```
